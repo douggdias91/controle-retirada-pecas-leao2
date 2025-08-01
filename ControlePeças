@@ -1,0 +1,288 @@
+import os
+import csv
+from datetime import datetime
+from flask import Flask, render_template, request, redirect, send_file, session
+from werkzeug.utils import secure_filename
+from utils.gerar_pdf import gerar_pdf
+
+app = Flask(__name__)
+app.secret_key = 'segredo'
+
+senha_fixa = "Leao2025"
+
+def carregar_pecas():
+    pecas = []
+    try:
+        with open("pecas.csv", newline='', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            pecas = [row for row in reader]
+    except FileNotFoundError:
+        pass
+    return pecas
+
+@app.route('/')
+def home():
+    pecas = carregar_pecas()
+    data_hoje = datetime.now().strftime("%d/%m/%Y")
+    return render_template("index.html", pecas=pecas, data_hoje=data_hoje)
+
+@app.route('/solicitar', methods=['POST'])
+def solicitar():
+    nome = request.form['nome']
+    setor = request.form['setor']
+    data = request.form['data']
+    peca = request.form['peca']
+    obs = request.form['obs']
+    arquivo_pdf = gerar_pdf(nome, setor, data, peca, obs)
+    return send_file(arquivo_pdf, as_attachment=True)
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    erro = False
+    if request.method == 'POST':
+        if request.form['senha'] == senha_fixa:
+            session['logado'] = True
+            return redirect('/admin')
+        else:
+            erro = True
+    return render_template("login.html", erro=erro)
+
+@app.route('/logout', methods=['POST'])
+def logout():
+    session.pop('logado', None)
+    return redirect('/login')
+
+@app.route('/admin')
+def admin():
+    if not session.get('logado'):
+        return redirect('/login')
+    pecas = carregar_pecas()
+    return render_template("admin.html", pecas=pecas)
+
+@app.route('/upload', methods=['POST'])
+def upload():
+    if not session.get('logado'):
+        return redirect('/login')
+    file = request.files['arquivo']
+    if file:
+        filename = secure_filename("pecas.csv")
+        file.save(filename)
+    return redirect('/admin')
+
+@app.route('/add_peca', methods=['POST'])
+def add_peca():
+    if not session.get('logado'):
+        return redirect('/login')
+    with open("pecas.csv", "a", newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow([request.form['codigo'], request.form['descricao']])
+    return redirect('/admin')
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+    from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+import os
+
+def gerar_pdf(nome, setor, data, peca, obs):
+    nome_arquivo = f"solicitacao_{nome.replace(' ', '_')}_{peca}.pdf"
+    caminho = os.path.join("/tmp", nome_arquivo)
+
+    c = canvas.Canvas(caminho, pagesize=A4)
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(200, 800, "Solicitação de Retirada de Peça")
+
+    c.setFont("Helvetica", 12)
+    c.drawString(50, 760, f"Nome: {nome}")
+    c.drawString(50, 740, f"Setor: {setor}")
+    c.drawString(50, 720, f"Data: {data}")
+    c.drawString(50, 700, f"Código da Peça: {peca}")
+    c.drawString(50, 680, f"Observações: {obs}")
+    c.drawString(50, 640, "Assinatura de Liberação: _______________________________")
+
+    c.save()
+    return caminho
+    <!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Controle de Retirada de Peças - Leão</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-orange-50 text-gray-800 font-sans min-h-screen flex items-center justify-center">
+  <div class="bg-white p-8 rounded-2xl shadow-lg w-full max-w-lg border border-orange-200">
+    <h1 class="text-2xl font-bold mb-6 text-orange-700">Solicitação de Retirada de Peças</h1>
+    <form action="/solicitar" method="POST" class="space-y-4">
+      <div>
+        <label for="nome" class="block font-semibold mb-1">Nome:</label>
+        <input type="text" id="nome" name="nome" required class="w-full p-2 border border-gray-300 rounded-xl" />
+      </div>
+      <div>
+        <label for="setor" class="block font-semibold mb-1">Setor:</label>
+        <input type="text" id="setor" name="setor" required class="w-full p-2 border border-gray-300 rounded-xl" />
+      </div>
+      <div>
+        <label for="data" class="block font-semibold mb-1">Data:</label>
+        <input type="text" id="data" name="data" value="{{ data_hoje }}" readonly class="w-full p-2 border border-gray-300 rounded-xl bg-gray-100" />
+      </div>
+      <div>
+        <label for="peca" class="block font-semibold mb-1">Peça:</label>
+        <select id="peca" name="peca" required class="w-full p-2 border border-gray-300 rounded-xl">
+          <option value="" disabled selected>Selecione uma peça</option>
+          {% for item in pecas %}
+          <option value="{{ item.codigo }}">{{ item.codigo }} - {{ item.descricao }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label for="obs" class="block font-semibold mb-1">Observações:</label>
+        <textarea id="obs" name="obs" rows="3" class="w-full p-2 border border-gray-300 rounded-xl"></textarea>
+      </div>
+      <button type="submit" class="w-full bg-orange-600 text-white py-2 rounded-xl font-semibold hover:bg-orange-700">Gerar PDF</button>
+    </form>
+  </div>
+</body>
+</html>
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Login Administrativo - Leão</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-orange-50 text-gray-800 font-sans flex items-center justify-center min-h-screen">
+  <div class="bg-white p-8 rounded-2xl shadow-lg w-full max-w-sm border border-orange-200">
+    <div class="text-center mb-6">
+      <img src="/static/logo-leao.png" alt="Logo Leão" class="h-16 mx-auto mb-4" />
+      <h1 class="text-2xl font-bold text-orange-700">Acesso Administrativo</h1>
+    </div>
+    <form action="/login" method="POST" class="space-y-4">
+      <div>
+        <label for="senha" class="block font-semibold">Senha:</label>
+        <input type="password" id="senha" name="senha" required class="w-full p-2 border border-gray-300 rounded-xl" />
+      </div>
+      {% if erro %}
+      <p class="text-red-600 text-sm">Senha incorreta. Tente novamente.</p>
+      {% endif %}
+      <div class="text-center">
+        <button type="submit" class="px-6 py-2 bg-orange-600 text-white font-semibold rounded-xl hover:bg-orange-700">Entrar no Sistema</button>
+      </div>
+    </form>
+  </div>
+</body>
+</html>
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Painel Administrativo - Leão</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-orange-50 text-gray-800 font-sans">
+  <div class="max-w-4xl mx-auto p-6 mt-10 bg-white rounded-2xl shadow-md border border-orange-200">
+    <div class="mb-6 flex items-center justify-between">
+      <div class="flex items-center space-x-4">
+        <img src="/static/logo-leao.png" alt="Logo Leão" class="h-12" />
+        <h1 class="text-2xl font-bold text-orange-700">Painel Administrativo</h1>
+      </div>
+      <form action="/logout" method="POST">
+        <button class="bg-red-500 text-white px-4 py-2 rounded-xl hover:bg-red-600">Sair</button>
+      </form>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+      <!-- Cadastro Manual de Peça -->
+      <div class="bg-orange-50 p-4 rounded-xl border border-orange-200">
+        <h2 class="text-lg font-bold mb-3 text-orange-700">Cadastro Manual de Peça</h2>
+        <form action="/add_peca" method="POST" class="space-y-3">
+          <div>
+            <label for="codigo" class="block font-semibold">Código:</label>
+            <input type="text" id="codigo" name="codigo" required class="w-full p-2 border border-gray-300 rounded-xl" />
+          </div>
+          <div>
+            <label for="descricao" class="block font-semibold">Descrição:</label>
+            <input type="text" id="descricao" name="descricao" required class="w-full p-2 border border-gray-300 rounded-xl" />
+          </div>
+          <button type="submit" class="px-4 py-2 bg-orange-600 text-white font-semibold rounded-xl hover:bg-orange-700">Adicionar Peça</button>
+        </form>
+      </div>
+
+      <!-- Upload CSV -->
+      <div class="bg-orange-50 p-4 rounded-xl border border-orange-200">
+        <h2 class="text-lg font-bold mb-3 text-orange-700">Upload de Planilha CSV</h2>
+        <form action="/upload" method="POST" enctype="multipart/form-data" class="space-y-3">
+          <div>
+            <label for="arquivo" class="block font-semibold">Selecionar Arquivo:</label>
+            <input type="file" id="arquivo" name="arquivo" accept=".csv" required class="w-full" />
+          </div>
+          <button type="submit" class="px-4 py-2 bg-orange-600 text-white font-semibold rounded-xl hover:bg-orange-700">Enviar Planilha</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Lista de Peças -->
+    <div class="mt-10">
+      <h2 class="text-lg font-bold mb-4 text-orange-700">Peças Cadastradas</h2>
+      <div class="overflow-x-auto">
+        <table class="min-w-full text-sm">
+          <thead>
+            <tr class="bg-orange-100">
+              <th class="px-4 py-2 text-left">Código</th>
+              <th class="px-4 py-2 text-left">Descrição</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in pecas %}
+            <tr class="border-b">
+              <td class="px-4 py-2">{{ item.codigo }}</td>
+              <td class="px-4 py-2">{{ item.descricao }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+# Controle de Retirada de Peças - Leão
+
+Sistema web simples para solicitação e controle de retirada de peças, com geração de PDF e painel administrativo protegido por senha.
+
+---
+
+## Funcionalidades
+
+- Cadastro e atualização de peças (manual ou via upload CSV) — protegido por senha  
+- Solicitação de retirada com dados de nome, setor, data, peça e observações  
+- Geração automática de documento PDF para impressão ou download  
+- Painel administrativo para gerenciar peças  
+
+---
+
+## Tecnologias
+
+- Python 3  
+- Flask  
+- ReportLab (para geração de PDF)  
+- TailwindCSS (estilização front-end)  
+
+---
+
+## Como rodar localmente
+
+1. Clone o repositório:  
+   ```bash
+   git clone https://github.com/douggdias91/controle-retirada-pecas-leao2.git
+   cd controle-retirada-pecas-leao2
+   python -m venv venv
+# Windows
+venv\Scripts\activate
+# Linux/Mac
+source venv/bin/activate
+pip install -r requirements.txt
+python app.py
